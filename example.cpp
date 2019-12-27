@@ -88,7 +88,7 @@ void main()
     wmi_helper_.start();
 
     // Retrieve data for 10 seconds.
-    std::this_thread::sleep_for(std::chrono::seconds(2));
+    std::this_thread::sleep_for(std::chrono::seconds(10));
 
     // automatically called by destructor, available if you want to manually call.
     wmi_helper_.cleanup();
