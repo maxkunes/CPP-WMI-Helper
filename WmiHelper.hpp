@@ -29,6 +29,18 @@ struct wmi_any
         static_assert(sizeof(T) <= MaxSize, "sizeof(T) too large to fit in WmiAny buffer. Please increase MaxSize template to fix this issue.");
         return *reinterpret_cast<T*>(data());
     }
+
+    std::wstring get_wide_string()
+    {
+        return std::wstring(static_cast<const wchar_t*>(data()));
+    }
+
+    std::string get_string()
+    {
+        auto wide_string = get_wide_string();
+        return std::string(wide_string.begin(), wide_string.end());
+    }
+	
 };
 
 using wmi_any32 = wmi_any<32>;
@@ -72,8 +84,10 @@ public:
             RPC_C_IMP_LEVEL_IMPERSONATE,
             NULL, EOAC_NONE, nullptr)))
         {
-            cleanup();
-            return false;
+            if (hr != RPC_E_TOO_LATE) {
+                cleanup();
+                return false;
+            }
         }
 
         if (FAILED(hr = CoCreateInstance(
@@ -159,7 +173,7 @@ public:
 
             thread_close_signal_ = true;
             update_thread_->join();
-        	
+
             // update_thread will set the signal to false when ready to terminate.
             while (thread_close_signal_)
             {
@@ -233,7 +247,7 @@ public:
         update_thread_ = std::make_unique<std::thread>(&wmi_helper::update_thread, this);
         thread_running = true;
     }
-	
+
     void update()
     {
         HRESULT hr = S_OK;
