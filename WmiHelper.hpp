@@ -1,18 +1,20 @@
 #pragma once
 #include <windows.h>
 #include <WbemCli.h>
-#include <iostream>
 #include <thread>
 #include <map>
 #include <optional>
 #include <functional>
 #include <atomic>
+#include <future>
 #include <utility>
 #include <vector>
 #include <mutex>
 #pragma comment(lib, "comsuppw.lib")
 #pragma comment(lib, "wbemuuid.lib")
 #pragma comment(lib, "Propsys.lib")
+
+#include "fmt/format.h"
 
 inline std::uint64_t get_current_time()
 {
@@ -151,28 +153,30 @@ public:
 
     bool init(const wmi_helper_config& config)
     {
-        HRESULT hr = S_OK;
+        unsigned long hr = S_OK;
         long    l_id_ = 0;
 
         config_ = config;
 
-        if (FAILED(hr = CoInitializeEx(NULL, COINIT_MULTITHREADED)))
+        if (FAILED(hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED)))
         {
             cleanup();
+            throw std::exception(fmt::format("CoInitializeEx failed with error code {0:#x}.", hr).c_str());
             return false;
         }
 
         if (FAILED(hr = CoInitializeSecurity(
-            NULL,
+            nullptr,
             -1,
-            NULL,
-            NULL,
+            nullptr,
+            nullptr,
             RPC_C_AUTHN_LEVEL_NONE,
             RPC_C_IMP_LEVEL_IMPERSONATE,
             NULL, EOAC_NONE, nullptr)))
         {
-            if (hr != RPC_E_TOO_LATE) {
+            if (static_cast<HRESULT>(hr) != RPC_E_TOO_LATE) {
                 cleanup();
+                throw std::exception(fmt::format("CoInitializeSecurity failed with error code {0:#x}.", hr).c_str());
                 return false;
             }
         }
@@ -185,6 +189,7 @@ public:
             reinterpret_cast<void**>(&p_wbem_locator_))))
         {
             cleanup();
+            throw std::exception(fmt::format("CoCreateInstance failed with error code {0:#x}.", hr).c_str());
             return false;
         }
 
@@ -194,6 +199,7 @@ public:
         if (nullptr == bstr_name_space_)
         {
             cleanup();
+            throw std::exception(fmt::format("SysAllocString failed.").c_str());
             return false;
         }
 
@@ -219,6 +225,7 @@ public:
         {
 
             cleanup();
+            throw std::exception(fmt::format("ConnectServer failed with error code {0:#x}.", hr).c_str());
             return false;
         }
 
@@ -247,6 +254,7 @@ public:
             reinterpret_cast<void**>(&p_refresher_))))
         {
             cleanup();
+            throw std::exception(fmt::format("CoCreateInstance failed with error code {0:#x}.", hr).c_str());
             return false;
         }
 
@@ -255,6 +263,7 @@ public:
             reinterpret_cast<void**>(&p_config_))))
         {
             cleanup();
+            throw std::exception(fmt::format("QueryInterface failed with error code {0:#x}.", hr).c_str());
             return false;
         }
 
@@ -268,6 +277,7 @@ public:
             &l_id_)))
         {
             cleanup();
+            throw std::exception(fmt::format("AddEnum failed with error code {0:#x}.", hr).c_str());
             return false;
         }
 
@@ -277,23 +287,27 @@ public:
 
         return true;
     }
-	
-    void cleanup()
+
+    void stop_query()
     {
-        if (thread_running && update_thread_) {
+        if (querying_) {
 
-            thread_close_signal_ = true;
-            update_thread_->join();
+            querying_ = false;
 
-            // update_thread will set the signal to false when ready to terminate.
-            while (thread_close_signal_)
+            // query_async will set the signal to true when terminating. possible race condition?
+            while (querying_)
             {
                 std::this_thread::sleep_for(std::chrono::milliseconds(500));
             }
-        }
 
-        if (update_thread_->joinable())
-            update_thread_->join();
+            querying_ = false;
+        }
+    }
+	
+    void cleanup()
+    {
+    	// TODO: better thread termination signal system
+        stop_query();
 
 
         if (p_wbem_locator_) {
@@ -398,135 +412,62 @@ public:
 	
     std::optional<wmi_wrapper_sync_result<AnySize>> query()
     {
+        if(querying_)
+        {
+            throw std::exception("Cannot start query while another one is already running!");
+        }
+    	
         if(config_.fire_count() == wmi_helper_config::infinite
             && config_.fire_time() == wmi_helper_config::infinite)
         {
             throw std::exception("WmiHelper::query() (non async) cannot be called with an infinite fire_count and fire_time as it would never complete!");
         }
     	
-        return query_internal(config_, get_current_time());
+        return query_internal(false, nullptr, bound_vars_, config_, get_current_time());
     }
 
-    void query_async(const wmi_helper_callback<AnySize>& callback)
+    std::future<void> query_async(const wmi_helper_callback<AnySize>& callback)
     {
-        update_thread_ = std::make_unique<std::thread>(&wmi_helper::query_async_internal, this, callback, config_, get_current_time());
-        thread_running = true;
+        auto current_time = get_current_time();
+        auto config = config_;
+        auto vars = bound_vars_;
+    	
+        return std::async(std::launch::async, [this, callback, current_time, vars, config]() { query_internal(true, callback, vars, config, current_time); });
     }
 
 private:
 	
-    void query_async_internal(const wmi_helper_callback<AnySize>& callback, const wmi_helper_config config, const std::uint64_t start_time)
-    {
-        auto fire_count = 0;
-        wmi_wrapper_result_map<AnySize> results_;
-        wmi_wrapper_result_map<AnySize> prev_results_;
-    	
-        while (true) {
-            results_.clear();
-            HRESULT hr = S_OK;
-
-            if (thread_close_signal_)
-            {
-                thread_close_signal_ = false;
-                thread_running = false;
-                return;
-            }
-
-            const auto num_rows = refresh_data();
-
-            if (!ap_enum_access_ || !ap_enum_access_[0])
-                return;
-
-
-            auto bound_vars_lock = std::scoped_lock(bound_vars_mutex_);
-
-            for (auto& bound_var : bound_vars_)
-            {
-                auto& [hash, name] = bound_var;
-
-                CIMTYPE var_type;
-                long var_handle;
-
-                if (FAILED(hr = ap_enum_access_[0]->GetPropertyHandle(
-                    name.c_str(),
-                    &var_type,
-                    &var_handle)))
-                {
-                    continue;
-                }
-
-                for (auto i = 0; i < num_rows; i++) {
-
-                    wmi_any<AnySize> any{};
-                    any.type = var_type;
-
-                    long read_bytes = 0x0;
-
-
-                    if (FAILED(ap_enum_access_[i]->ReadPropertyValue(var_handle, sizeof(any), &read_bytes, any.data<byte*>())))
-                    {
-                        continue;
-                    }
-
-
-                    results_[hash].push_back(any);
-                }
-
-            }
-
-            for (auto i = 0; i < num_rows; i++) {
-                ap_enum_access_[i]->Release();
-                ap_enum_access_[i] = nullptr;
-            }
-
-
-
-            callback(config, { results_, prev_results_ });
-            prev_results_ = results_;
-
-            fire_count++;
-
-            if (config.fire_count() != wmi_helper_config::infinite) {
-                if (fire_count == config.fire_count())
-                {
-                    thread_running = false;
-                    return;
-                }
-            }
-
-            if (config.fire_time() != wmi_helper_config::infinite) {
-                if (get_current_time() >= start_time + config.fire_time())
-                {
-                    thread_running = false;
-                    return;
-                }
-            }
-
-            std::this_thread::sleep_for(std::chrono::milliseconds(1000 / config.updates_per_second()));
-        }
-        return;
-    }
-
-    std::optional<wmi_wrapper_sync_result<AnySize>> query_internal(const wmi_helper_config& config, const std::uint64_t start_time)
+    std::optional<wmi_wrapper_sync_result<AnySize>> query_internal(const bool async, const wmi_helper_callback<AnySize> callback, const std::unordered_map<std::uint64_t, std::wstring> bound_vars, const wmi_helper_config& config, const std::uint64_t start_time)
     {
         auto fire_count = 0;
         wmi_wrapper_sync_result<AnySize> ret_value;
 
         wmi_wrapper_result_map<AnySize> results_;
         wmi_wrapper_result_map<AnySize> prev_results_;
+
+        querying_ = true;
     	
         while (true)
         {
+            if (async)
+            {
+                if (!querying_)
+                {
+                    querying_ = true;
+                    return std::nullopt;
+                }
+            }
+        	
             results_.clear();
 
             HRESULT hr = S_OK;
-
+        	
             const auto num_rows = refresh_data();
 
             if (!ap_enum_access_ || !ap_enum_access_[0])
                 continue;
 
-            for (auto& bound_var : bound_vars_)
+            for (auto& bound_var : bound_vars)
             {
                 auto& [hash, name] = bound_var;
 
@@ -564,7 +505,14 @@ private:
                 ap_enum_access_[i] = nullptr;
             }
 
-            ret_value.push_back({ results_, prev_results_ });
+        	if(async)
+        	{
+				callback(config, { results_, prev_results_ });
+        	}
+            else {  // NOLINT(readability-misleading-indentation)
+				ret_value.push_back({ results_, prev_results_ });
+            }
+        	
             prev_results_ = results_;
 
             fire_count++;
@@ -572,6 +520,13 @@ private:
             if (config.fire_count() != wmi_helper_config::infinite) {
                 if (fire_count == config.fire_count())
                 {
+                    querying_ = false;
+                	
+                    if(async)
+                    {
+                        return std::nullopt;
+                    }
+                	
                     return ret_value;
                 }
             }
@@ -579,6 +534,12 @@ private:
             if (config.fire_time() != wmi_helper_config::infinite) {
                 if (get_current_time() >= start_time + config.fire_time())
                 {
+                    querying_ = false;
+                    if (async)
+                    {
+                        return std::nullopt;
+                    }
+                	
                     return ret_value;
                 }
             }
@@ -586,6 +547,7 @@ private:
             std::this_thread::sleep_for(std::chrono::milliseconds(1000 / config.updates_per_second()));
         }
 
+        querying_ = false;
         return std::nullopt;
     }
 
@@ -601,14 +563,11 @@ private:
     IWbemHiPerfEnum* p_enum_ = nullptr;
     IWbemRefresher* p_refresher_ = nullptr;
 
-    std::mutex bound_vars_mutex_;
     std::unordered_map<std::uint64_t, std::wstring> bound_vars_;
-
-    std::unique_ptr<std::thread> update_thread_;
+	
     std::int32_t updates_per_second_ = 1;
-
-    std::atomic_bool thread_close_signal_ = false;
-    std::atomic_bool thread_running = false;
+	
+    std::atomic_bool querying_ = false;
 
     wmi_helper_config config_;
 };

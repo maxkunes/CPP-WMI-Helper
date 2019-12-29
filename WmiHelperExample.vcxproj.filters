@@ -13,6 +13,9 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="Source Files\fmt">
+      <UniqueIdentifier>{373e5c70-d819-410c-a6a2-08aff81f55eb}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="WmiHelper.hpp">
@@ -22,6 +25,12 @@
   <ItemGroup>
     <ClCompile Include="example.cpp">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="os.cc">
+      <Filter>Source Files\fmt</Filter>
+    </ClCompile>
+    <ClCompile Include="format.cc">
+      <Filter>Source Files\fmt</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>
