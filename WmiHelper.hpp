@@ -120,8 +120,10 @@ private:
     std::wstring password_;
 };
 
+using wmi_var_handle = std::uint64_t;
+
 template<std::size_t AnySize>
-using wmi_wrapper_result_map = std::map< std::uint64_t, std::vector<wmi_any<AnySize>>>;
+using wmi_wrapper_result_map = std::map< wmi_var_handle, std::vector<wmi_any<AnySize>>>;
 
 template<std::size_t AnySize>
 struct wmi_wrapper_result
@@ -341,12 +343,9 @@ public:
         CoUninitialize();
     }
 
-    std::optional<std::uint64_t> capture_var(const std::wstring& var_name)
+    wmi_var_handle capture_var(const std::wstring& var_name)
     {
         const auto var_hash = std::hash<std::wstring>{}(var_name);
-
-        if (bound_vars_.count(var_hash))
-            return std::nullopt;
 
         bound_vars_[var_hash] = var_name;
 

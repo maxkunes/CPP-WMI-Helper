@@ -58,13 +58,11 @@ void main()
         helper.cleanup();
         return;
     }
-
-    bank_handle = helper.capture_var(L"BankLabel").value();
-    speed_handle = helper.capture_var(L"Speed").value();
-    capacity_handle = helper.capture_var(L"Capacity").value();
-    locator_handle = helper.capture_var(L"DeviceLocator").value();
-
-
+	
+    bank_handle = helper.capture_var(L"BankLabel");
+    speed_handle = helper.capture_var(L"Speed");
+    capacity_handle = helper.capture_var(L"Capacity");
+    locator_handle = helper.capture_var(L"DeviceLocator");
 	
 	const auto& sync_result_opt = helper.query();
 
