@@ -60,7 +60,7 @@ class wmi_helper_config
 {
 public:
 	
-    wmi_helper_config(std::wstring class_name, std::int32_t fire_count = -1, std::int32_t fire_time = 5000, std::int32_t updates_per_second = 2, bool async = true) : class_name_(std::move(class_name)), fire_count_(fire_count), fire_time_(fire_time), updates_per_second_(updates_per_second), async_(async)
+    wmi_helper_config(std::wstring class_name, std::int32_t fire_count = infinite, std::int32_t fire_time = infinite, std::int32_t updates_per_second = 2) : class_name_(std::move(class_name)), fire_count_(fire_count), fire_time_(fire_time), updates_per_second_(updates_per_second)
     {
 
     }
@@ -103,21 +103,17 @@ public:
         return updates_per_second_;
     }
 
-    [[nodiscard]] const bool& async() const
-    {
-        return async_;
-    }
-	
+    const static std::int32_t infinite = -1;
 private:
     std::wstring class_name_;
     std::int32_t fire_count_ = -1; // -1 for infinity
     std::int32_t fire_time_ = 5000; // -1 for infinity
     std::int32_t updates_per_second_ = 2; // times wmi is queried per second
-    bool async_ = true;
 
     std::wstring server_ = L"\\\\.\\root\\cimv2";
     std::wstring username_;
     std::wstring password_;
+
 };
 
 using wmi_var_handle = std::uint64_t;
@@ -402,6 +398,12 @@ public:
 	
     std::optional<wmi_wrapper_sync_result<AnySize>> query()
     {
+        if(config_.fire_count() == wmi_helper_config::infinite
+            && config_.fire_time() == wmi_helper_config::infinite)
+        {
+            throw std::exception("WmiHelper::query() (non async) cannot be called with an infinite fire_count and fire_time as it would never complete!");
+        }
+    	
         return query_internal(config_, get_current_time());
     }
 
@@ -416,18 +418,18 @@ private:
     void query_async_internal(const wmi_helper_callback<AnySize>& callback, const wmi_helper_config config, const std::uint64_t start_time)
     {
         auto fire_count = 0;
-
+        wmi_wrapper_result_map<AnySize> results_;
+        wmi_wrapper_result_map<AnySize> prev_results_;
+    	
         while (true) {
             results_.clear();
             HRESULT hr = S_OK;
 
-            if (config.async()) {
-                if (thread_close_signal_)
-                {
-                    thread_close_signal_ = false;
-                    thread_running = false;
-                    return;
-                }
+            if (thread_close_signal_)
+            {
+                thread_close_signal_ = false;
+                thread_running = false;
+                return;
             }
 
             const auto num_rows = refresh_data();
@@ -467,7 +469,6 @@ private:
                     }
 
 
-                    auto results_lock = std::scoped_lock(results_mutex_);
                     results_[hash].push_back(any);
                 }
 
@@ -480,22 +481,25 @@ private:
 
 
 
-            auto results_lock = std::scoped_lock(results_mutex_);
             callback(config, { results_, prev_results_ });
             prev_results_ = results_;
 
             fire_count++;
 
-            if (fire_count == config.fire_count())
-            {
-                thread_running = false;
-                return;
+            if (config.fire_count() != wmi_helper_config::infinite) {
+                if (fire_count == config.fire_count())
+                {
+                    thread_running = false;
+                    return;
+                }
             }
 
-            if (get_current_time() - start_time >= start_time + config.fire_time())
-            {
-                thread_running = false;
-                return;
+            if (config.fire_time() != wmi_helper_config::infinite) {
+                if (get_current_time() >= start_time + config.fire_time())
+                {
+                    thread_running = false;
+                    return;
+                }
             }
 
             std::this_thread::sleep_for(std::chrono::milliseconds(1000 / config.updates_per_second()));
@@ -508,6 +512,9 @@ private:
         auto fire_count = 0;
         wmi_wrapper_sync_result<AnySize> ret_value;
 
+        wmi_wrapper_result_map<AnySize> results_;
+        wmi_wrapper_result_map<AnySize> prev_results_;
+    	
         while (true)
         {
             results_.clear();
@@ -557,20 +564,23 @@ private:
                 ap_enum_access_[i] = nullptr;
             }
 
-            prev_results_ = results_;
-
             ret_value.push_back({ results_, prev_results_ });
+            prev_results_ = results_;
 
             fire_count++;
 
-            if (fire_count == config.fire_count())
-            {
-                return ret_value;
+            if (config.fire_count() != wmi_helper_config::infinite) {
+                if (fire_count == config.fire_count())
+                {
+                    return ret_value;
+                }
             }
 
-            if (get_current_time() - start_time >= start_time + config.fire_time())
-            {
-                return ret_value;
+            if (config.fire_time() != wmi_helper_config::infinite) {
+                if (get_current_time() >= start_time + config.fire_time())
+                {
+                    return ret_value;
+                }
             }
 
             std::this_thread::sleep_for(std::chrono::milliseconds(1000 / config.updates_per_second()));
@@ -579,7 +589,6 @@ private:
         return std::nullopt;
     }
 
-	
     // Used by init method
     IWbemConfigureRefresher* p_config_ = nullptr;
     IWbemServices* p_name_space_ = nullptr;
@@ -594,10 +603,6 @@ private:
 
     std::mutex bound_vars_mutex_;
     std::unordered_map<std::uint64_t, std::wstring> bound_vars_;
-
-    std::mutex results_mutex_;
-    wmi_wrapper_result_map<AnySize> results_;
-    wmi_wrapper_result_map<AnySize> prev_results_;
 
     std::unique_ptr<std::thread> update_thread_;
     std::int32_t updates_per_second_ = 1;

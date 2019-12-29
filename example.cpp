@@ -3,7 +3,6 @@
 
 // WmiHelper.hpp uses std::optional and structured bindings. Either compile with a supported c++ version or remove the uses of optional and structured bindings. It is like one function.
 
-wmi_helper_32 helper;
 std::uint64_t bank_handle = 0;
 std::uint64_t speed_handle = 0;
 std::uint64_t capacity_handle = 0;
@@ -48,9 +47,11 @@ void main()
 {
 	const wmi_helper_config config(
         L"Win32_PhysicalMemory",
-        5,
-        -1,
-        1);
+        wmi_helper_config::infinite,
+        5000,
+        2);
+
+    wmi_helper_32 helper;
 	
     // tell helper what class we want data from. aka what table
     if (!helper.init(config))
@@ -63,6 +64,8 @@ void main()
     speed_handle = helper.capture_var(L"Speed");
     capacity_handle = helper.capture_var(L"Capacity");
     locator_handle = helper.capture_var(L"DeviceLocator");
+
+    // synchronous query
 	
 	const auto& sync_result_opt = helper.query();
 
@@ -96,8 +99,8 @@ void main()
             }
         }
     }
-	
 
+	// asynchronous query
     helper.query_async(wmi_callback);
 	
     std::this_thread::sleep_for(std::chrono::milliseconds(5000));
