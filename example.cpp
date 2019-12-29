@@ -1,96 +1,108 @@
 #include <iostream>
 #include "WmiHelper.hpp"
 
-// WmiHelper.hpp uses std::optional. Either compile with a supported c++ version or remove the uses of optional. It is like one function.
+// WmiHelper.hpp uses std::optional and structured bindings. Either compile with a supported c++ version or remove the uses of optional and structured bindings. It is like one function.
 
-std::uint64_t name_handle_ = 0;
-std::uint64_t usage_handle_ = 0;
-std::uint64_t time_handle_ = 0;
+wmi_helper_32 helper;
+std::uint64_t bank_handle = 0;
+std::uint64_t speed_handle = 0;
+std::uint64_t capacity_handle = 0;
+std::uint64_t locator_handle = 0;
 
 // Executes in its own thread. Use mutexes or whatever to synchronize between threads for data passing.
-void wmi_callback(wmi_wrapper_results<wmi_any32>& results, wmi_wrapper_results<wmi_any32>& prev_results)
+void wmi_callback(const wmi_helper_config& config, const wmi_wrapper_32_result& wmi_result)
 {
-    if (!results.empty() && !prev_results.empty())
+    auto& results = wmi_result.result;
+    auto prev_results = wmi_result.prev_result;
+	
+    if (!results.empty())
     {
-        if (results.count(time_handle_) && results.count(usage_handle_) && results.count(name_handle_))
+        if (results.count(bank_handle) && results.count(speed_handle) && results.count(capacity_handle) && results.count(locator_handle))
         {
-            if (prev_results.count(time_handle_) && prev_results.count(usage_handle_))
+
+            auto& bank_results = results.at(bank_handle);
+            auto& speed_results = results.at(speed_handle);
+            auto& capacity_results = results.at(capacity_handle);
+            auto& locator_results = results.at(locator_handle);
+
+            for (auto i = 0; i < bank_results.size(); i++)
             {
-                auto& name_results = results[name_handle_];
-                auto& time_results = results[time_handle_];
-                auto& usage_results = results[usage_handle_];
-                auto& prev_time_results = prev_results[time_handle_];
-                auto& prev_usage_results = prev_results[usage_handle_];
+                // not exactly safe. 32 bytes may be too small for the string. check the wmi_any32 class for more details.
+                // we are assuming each column has the same amount of rows. This is not always the case if a property read fails due to something like insufficient buffer size.
+                const auto bank = bank_results[i].get_string();
+                const auto speed = speed_results[i].get<std::uint32_t>();
+                const auto capacity = capacity_results[i].get<std::uint64_t>();
+                const auto locator = locator_results[i].get_string();
 
-                for (auto i = 0; i < time_results.size(); i++)
-                {
-                    auto thread_name_wide = std::wstring(static_cast<const wchar_t*>(name_results[i].data()));
-
-                	// Please forgive me...
-                    std::string thread_name = std::string(thread_name_wide.begin(), thread_name_wide.end());
-                	
-                    const double new_usage = usage_results[i].get<std::uint64_t>();
-                    const double old_usage = prev_usage_results[i].get<std::uint64_t>();
-                    const double new_time = time_results[i].get<std::uint64_t>();
-                    const double old_time = prev_time_results[i].get<std::uint64_t>();
-
-                    const auto percent_processor_time = (1 - ((new_usage - old_usage) / (new_time - old_time))) * 100.0;
-
-                    std::cout << "Thread #" << thread_name << " has " << percent_processor_time << "% usage.\r\n";
-                }
-
+                // cout is not thread safe as far as I know. purely used as an example. functions for me, might not for you. send a message back to the main thread using something like mutexes.
+                std::cout << bank << " at " << locator << " has a speed of " << speed << "mhz and a capacity of " << capacity << std::endl;
             }
+
         }
+
     }
 }
 
 
 void main()
 {
-    wmi_helper<wmi_any32> wmi_helper_;
-
-
-    if (!wmi_helper_.init(L"Win32_PerfRawData_PerfOS_Processor", 2 /* updates_per_second */))
+	const wmi_helper_config config(
+        L"Win32_PhysicalMemory",
+        5,
+        -1,
+        1);
+	
+    // tell helper what class we want data from. aka what table
+    if (!helper.init(config))
     {
-        wmi_helper_.cleanup();
+        helper.cleanup();
         return;
     }
 
-    auto bound_var = wmi_helper_.bind_var(L"PercentProcessorTime");
+    bank_handle = helper.capture_var(L"BankLabel").value();
+    speed_handle = helper.capture_var(L"Speed").value();
+    capacity_handle = helper.capture_var(L"Capacity").value();
+    locator_handle = helper.capture_var(L"DeviceLocator").value();
 
-    if (!bound_var) {
-        wmi_helper_.cleanup();
-        return;
+
+	
+	const auto& sync_result_opt = helper.query();
+
+    if(sync_result_opt.has_value())
+    {
+        const auto& sync_result = sync_result_opt.value();
+
+        for (auto& [results, prev_results] : sync_result) {
+
+            if (results.count(bank_handle) && results.count(speed_handle) && results.count(capacity_handle) && results.count(locator_handle))
+            {
+
+                auto& bank_results = results.at(bank_handle);
+                auto& speed_results = results.at(speed_handle);
+                auto& capacity_results = results.at(capacity_handle);
+                auto& locator_results = results.at(locator_handle);
+
+                for (auto i = 0; i < bank_results.size(); i++)
+                {
+                    // not exactly safe. 32 bytes may be too small for the string. check the wmi_any32 class for more details.
+                    // we are assuming each column has the same amount of rows. This is not always the case if a property read fails due to something like insufficient buffer size.
+                    const auto bank = bank_results[i].get_string();
+                    const auto speed = speed_results[i].get<std::uint32_t>();
+                    const auto capacity = capacity_results[i].get<std::uint64_t>();
+                    const auto locator = locator_results[i].get_string();
+
+                    // cout is not thread safe as far as I know. purely used as an example. functions for me, might not for you. send a message back to the main thread using something like mutexes.
+                    std::cout << bank << " at " << locator << " has a speed of " << speed << "mhz and a capacity of " << capacity << std::endl;
+                }
+
+            }
+        }
     }
+	
 
-    usage_handle_ = bound_var.value();
-
-    bound_var = wmi_helper_.bind_var(L"TimeStamp_Sys100NS");
-
-    if (!bound_var) {
-        wmi_helper_.cleanup();
-        return;
-    }
-
-    time_handle_ = bound_var.value();
-
-    bound_var = wmi_helper_.bind_var(L"Name");
-
-    if (!bound_var) {
-        wmi_helper_.cleanup();
-        return;
-    }
-
-    name_handle_ = bound_var.value();
-
-    wmi_helper_.bind_callback(wmi_callback);
-
-    wmi_helper_.start();
-
-    // Retrieve data for 10 seconds.
-    std::this_thread::sleep_for(std::chrono::seconds(10));
-
-    // automatically called by destructor, available if you want to manually call.
-    wmi_helper_.cleanup();
+    helper.query_async(wmi_callback);
+	
+    std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+	
     return;
 }
