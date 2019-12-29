@@ -26,6 +26,7 @@ struct wmi_any
 {
     CIMTYPE type;
     char reserved[MaxSize];
+    std::wstring str;
 
 	template<typename T>
     [[nodiscard]] T data() const
@@ -43,15 +44,12 @@ struct wmi_any
 
     [[nodiscard]] std::wstring get_wide_string() const
     {
-	    const auto ptr = data<const wchar_t*>();
-		
-        return std::wstring(ptr);
+        return str;
     }
 
     [[nodiscard]] std::string get_string() const
     {
-        auto wide_string = get_wide_string();
-        return std::string(wide_string.begin(), wide_string.end());
+        return std::string(str.begin(), str.end());
     }
 
 };
@@ -489,8 +487,25 @@ private:
 
                     long read_bytes = 0x0;
 
+                	if(var_type == 8)
+                	{
+                        // wstring
 
-                    if (FAILED(ap_enum_access_[i]->ReadPropertyValue(var_handle, sizeof(any), &read_bytes, any.data<byte*>())))
+                        if (FAILED(ap_enum_access_[i]->ReadPropertyValue(var_handle, 0, &read_bytes, any.data<byte*>())))
+                        {
+                            std::wstring str;
+                            str.resize(read_bytes);
+
+                            if (FAILED(ap_enum_access_[i]->ReadPropertyValue(var_handle, read_bytes, &read_bytes, reinterpret_cast<byte*>(str.data()))))
+                            {
+                                continue;
+                            }
+
+                            any.str = str;
+                        }
+                		
+                	}
+                    else if (FAILED(ap_enum_access_[i]->ReadPropertyValue(var_handle, sizeof(any), &read_bytes, any.data<byte*>())))
                     {
                         continue;
                     }
