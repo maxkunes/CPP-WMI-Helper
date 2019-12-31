@@ -425,15 +425,15 @@ public:
         });
     }
 
-    std::future <wmi_wrapper_vector_result<AnySize>> query_async_return(const wmi_helper_callback<AnySize>& callback)
+    std::future <wmi_wrapper_vector_result<AnySize>> query_async_return()
     {
         auto current_time = get_current_time();
         auto config = config_;
         auto vars = bound_vars_;
 
-        return std::async(std::launch::async, [this, callback, current_time, vars, config]()
+        return std::async(std::launch::async, [this, current_time, vars, config]()
         {
-			auto opt = query_internal(true, true, callback, vars, config, current_time);
+			auto opt = query_internal(true, true, nullptr, vars, config, current_time);
             return opt.value(); // no way to ever have no value
         });
     }

@@ -83,7 +83,7 @@ void main()
 
 	// asynchronous query
     //auto future = helper.query_async(wmi_callback); // with callback and void future
-    auto future = helper.query_async_return(wmi_callback); // future syncs vector of results when async task finishes
+    auto future = helper.query_async_return(); // future syncs vector of results when async task finishes
 
     //helper.stop_query() can be used to stop a async query before it is supposed to end.
 	
