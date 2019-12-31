@@ -8,7 +8,7 @@ std::uint64_t speed_handle = 0;
 std::uint64_t capacity_handle = 0;
 std::uint64_t locator_handle = 0;
 
-void print_result(const wmi_helper_config& config, const wmi_wrapper_32_result& wmi_result)
+void print_result(const wmi_helper_config& config, const wmi_wrapper_32_class_result& wmi_result)
 {
     auto& results = wmi_result.result;
     auto prev_results = wmi_result.prev_result;
@@ -42,7 +42,7 @@ void print_result(const wmi_helper_config& config, const wmi_wrapper_32_result& 
 }
 
 // Executes in its own thread. Use mutexes or whatever to synchronize between threads for data passing.
-void wmi_callback(const wmi_helper_config& config, const wmi_wrapper_32_result& wmi_result)
+void wmi_callback(const wmi_helper_config& config, const wmi_wrapper_32_class_result& wmi_result)
 {
     print_result(config, wmi_result);
 }
@@ -53,8 +53,8 @@ void main()
 	const wmi_helper_config config(
         L"Win32_PhysicalMemory",
         wmi_helper_config::infinite,
-        5000,
-        2);
+        1000,
+        10);
 
     wmi_helper_32 helper;
 
@@ -79,18 +79,15 @@ void main()
 
     // synchronous query
 	
-	const auto& sync_result_opt = helper.query();
+	const auto& sync_result = helper.query();
 
-    if(sync_result_opt.has_value())
-    {
-        const auto& sync_result = sync_result_opt.value();
-
-    	for(auto& result : sync_result)
-			print_result(config, result);
-    }
+    for(auto& result : sync_result)
+		print_result(config, result);
+ 
 
 	// asynchronous query
-    auto future = helper.query_async(wmi_callback);
+    //auto future = helper.query_async(wmi_callback); // with callback and void future
+    auto future = helper.query_async_return(wmi_callback); // future syncs vector of results when async task finishes
 
     //helper.stop_query() can be used to stop a async query before it is supposed to end.
 	
@@ -100,8 +97,12 @@ void main()
         std::cout << "Future object still invalid..." << std::endl;
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-	
+
     std::cout << "Async query finished!" << std::endl;
+
+    for (auto& result : future.get())
+        print_result(config, result);
+	
 	
     return;
 }

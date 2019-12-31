@@ -122,19 +122,19 @@ template<std::size_t AnySize>
 using wmi_wrapper_result_map = std::map< wmi_var_handle, std::vector<wmi_any<AnySize>>>;
 
 template<std::size_t AnySize>
-struct wmi_wrapper_result
+struct wmi_wrapper_class_result
 {
     wmi_wrapper_result_map<AnySize> result;
     wmi_wrapper_result_map<AnySize> prev_result;
 };
 
-using wmi_wrapper_32_result = wmi_wrapper_result<32>;
+using wmi_wrapper_32_class_result = wmi_wrapper_class_result<32>;
 
 template<std::size_t AnySize>
-using wmi_helper_callback = std::function<void(const wmi_helper_config&, const wmi_wrapper_result<AnySize>&)>;
+using wmi_helper_callback = std::function<void(const wmi_helper_config&, const wmi_wrapper_class_result<AnySize>&)>;
 
 template<std::size_t AnySize>
-using wmi_wrapper_sync_result = std::vector<wmi_wrapper_result<AnySize>>;
+using wmi_wrapper_vector_result = std::vector<wmi_wrapper_class_result<AnySize>>;
 
 template<std::size_t AnySize>
 class wmi_helper
@@ -408,7 +408,7 @@ public:
         return dw_num_returned;
     }
 	
-    std::optional<wmi_wrapper_sync_result<AnySize>> query()
+    wmi_wrapper_vector_result<AnySize> query()
     {
         if(querying_)
         {
@@ -421,7 +421,7 @@ public:
             throw std::exception("WmiHelper::query() (non async) cannot be called with an infinite fire_count and fire_time as it would never complete!");
         }
     	
-        return query_internal(false, nullptr, bound_vars_, config_, get_current_time());
+        return query_internal(false, true, nullptr, bound_vars_, config_, get_current_time()).value();
     }
 
     std::future<void> query_async(const wmi_helper_callback<AnySize>& callback)
@@ -430,15 +430,32 @@ public:
         auto config = config_;
         auto vars = bound_vars_;
     	
-        return std::async(std::launch::async, [this, callback, current_time, vars, config]() { query_internal(true, callback, vars, config, current_time); });
+        return std::async(std::launch::async, [this, callback, current_time, vars, config]()
+        {
+	        query_internal(true, false, callback, vars, config, current_time);
+        });
     }
+
+    std::future <wmi_wrapper_vector_result<AnySize>> query_async_return(const wmi_helper_callback<AnySize>& callback)
+    {
+        auto current_time = get_current_time();
+        auto config = config_;
+        auto vars = bound_vars_;
+
+        return std::async(std::launch::async, [this, callback, current_time, vars, config]()
+        {
+			auto opt = query_internal(true, true, callback, vars, config, current_time);
+            return opt.value(); // no way to ever have no value
+        });
+    }
+	
 
 private:
 	
-    std::optional<wmi_wrapper_sync_result<AnySize>> query_internal(const bool async, const wmi_helper_callback<AnySize> callback, const std::unordered_map<std::uint64_t, std::wstring> bound_vars, const wmi_helper_config& config, const std::uint64_t start_time)
+    std::optional<wmi_wrapper_vector_result<AnySize>> query_internal(const bool async, const bool return_data, const wmi_helper_callback<AnySize> callback, const std::unordered_map<std::uint64_t, std::wstring> bound_vars, const wmi_helper_config& config, const std::uint64_t start_time)
     {
         auto fire_count = 0;
-        wmi_wrapper_sync_result<AnySize> ret_value;
+        wmi_wrapper_vector_result<AnySize> ret_value;
 
         wmi_wrapper_result_map<AnySize> results_;
         wmi_wrapper_result_map<AnySize> prev_results_;
@@ -452,6 +469,10 @@ private:
                 if (!querying_)
                 {
                     querying_ = true;
+
+                    if (return_data)
+                        return ret_value;
+                	
                     return std::nullopt;
                 }
             }
@@ -520,7 +541,7 @@ private:
                 ap_enum_access_[i] = nullptr;
             }
 
-        	if(async)
+        	if(async && !return_data)
         	{
 				callback(config, { results_, prev_results_ });
         	}
@@ -537,7 +558,7 @@ private:
                 {
                     querying_ = false;
                 	
-                    if(async)
+                    if(async && !return_data)
                     {
                         return std::nullopt;
                     }
@@ -550,7 +571,7 @@ private:
                 if (get_current_time() >= start_time + config.fire_time())
                 {
                     querying_ = false;
-                    if (async)
+                    if (async && !return_data)
                     {
                         return std::nullopt;
                     }
