@@ -149,7 +149,7 @@ public:
         cleanup();
     }
 
-    bool init(const wmi_helper_config& config)
+    void init(const wmi_helper_config& config)
     {
         unsigned long hr = S_OK;
         long    l_id_ = 0;
@@ -160,7 +160,6 @@ public:
         {
             cleanup();
             throw std::exception(fmt::format("CoInitializeEx failed with error code {0:#x}.", hr).c_str());
-            return false;
         }
 
         if (FAILED(hr = CoInitializeSecurity(
@@ -175,7 +174,6 @@ public:
             if (static_cast<HRESULT>(hr) != RPC_E_TOO_LATE) {
                 cleanup();
                 throw std::exception(fmt::format("CoInitializeSecurity failed with error code {0:#x}.", hr).c_str());
-                return false;
             }
         }
 
@@ -188,7 +186,6 @@ public:
         {
             cleanup();
             throw std::exception(fmt::format("CoCreateInstance failed with error code {0:#x}.", hr).c_str());
-            return false;
         }
 
         // Connect to the desired namespace.
@@ -198,7 +195,6 @@ public:
         {
             cleanup();
             throw std::exception(fmt::format("SysAllocString failed.").c_str());
-            return false;
         }
 
         BSTR username = nullptr;
@@ -224,7 +220,6 @@ public:
 
             cleanup();
             throw std::exception(fmt::format("ConnectServer failed with error code {0:#x}.", hr).c_str());
-            return false;
         }
 
         p_wbem_locator_->Release();
@@ -253,7 +248,6 @@ public:
         {
             cleanup();
             throw std::exception(fmt::format("CoCreateInstance failed with error code {0:#x}.", hr).c_str());
-            return false;
         }
 
         if (FAILED(hr = p_refresher_->QueryInterface(
@@ -262,7 +256,6 @@ public:
         {
             cleanup();
             throw std::exception(fmt::format("QueryInterface failed with error code {0:#x}.", hr).c_str());
-            return false;
         }
 
         // Add an enumerator to the refresher.
@@ -276,14 +269,10 @@ public:
         {
             cleanup();
             throw std::exception(fmt::format("AddEnum failed with error code {0:#x}.", hr).c_str());
-            return false;
         }
 
         p_config_->Release();
         p_config_ = nullptr;
-
-
-        return true;
     }
 
     void stop_query()

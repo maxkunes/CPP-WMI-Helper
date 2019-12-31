@@ -60,11 +60,7 @@ void main()
 
     try {
         // tell helper what class we want data from. aka what table
-        if (!helper.init(config))
-        {
-            helper.cleanup();
-            return;
-        }
+        helper.init(config);
     }
 	catch(const std::exception& ex)
 	{
